@@ -1,0 +1,74 @@
+name: 🚀 CI/CD con SonarQube y Docker
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-analyze-deploy:
+    name: 🔁 Build + Análisis + Despliegue
+    runs-on: self-hosted
+
+    steps:
+      - name: 📥 Paso 1 - Clonar repositorio
+        uses: actions/checkout@v3
+
+      - name: ☕ Paso 2 - Instalar Java y Maven
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: 🧪 Paso 3 - Compilar con Maven
+        run: |
+          echo "📦 Compilando proyecto..."
+          mvn clean package -DskipTests
+          echo "✅ Build completado."
+
+      - name: 📊 Paso 4 - Análisis con SonarQube
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          echo "🔍 Ejecutando análisis SonarQube..."
+          mvn sonar:sonar \
+            -Dsonar.projectKey=lpapp \
+            -Dsonar.projectName=lpapp \
+            -Dsonar.host.url=http://localhost:9000 \
+            -Dsonar.login=$SONAR_TOKEN
+          echo "✅ Análisis completado."
+
+      - name: 🐳 Paso 5 - Desplegar con Docker Compose
+        run: |
+          echo "🧹 Apagando contenedores anteriores si existen..."
+          docker compose -f docker/docker-compose.yml down -v --remove-orphans || echo "⚠ No se pudo bajar contenedores"
+
+          echo "🚀 Iniciando nuevo despliegue..."
+          docker compose -f docker/docker-compose.yml up -d --build || echo "❌ Error en docker-compose up"
+
+          echo "⏳ Esperando 15 segundos para que la app arranque..."
+          sleep 15
+
+          echo "📋 Contenedores activos:"
+          docker ps
+
+          echo "📝 Logs recientes del contenedor:"
+          CONTAINER_NAME=$(docker ps --filter "name=product_app" --format "{{.Names}}" | head -n 1)
+          if [ -n "$CONTAINER_NAME" ]; then
+            docker logs --tail 50 "$CONTAINER_NAME"
+          else
+            echo "⚠ No se encontró ningún contenedor con nombre product_app"
+          fi
+
+          echo "🌐 Verificando si la app responde en http://localhost:8080 ..."
+          for i in {1..5}; do
+            if curl --fail http://localhost:8080; then
+              echo "✅ La app respondió correctamente."
+              break
+            else
+              echo "⏳ Intento $i: esperando respuesta de la app..."
+              sleep 5
+            fi
+          done
